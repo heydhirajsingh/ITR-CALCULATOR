@@ -1,0 +1,3 @@
+# Optional system-dependent enhancements.
+# SQLCipher support requires a compatible SQLCipher runtime on the host.
+pysqlcipher3>=1.2.0
