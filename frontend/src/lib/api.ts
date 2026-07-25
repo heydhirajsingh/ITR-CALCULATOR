@@ -4,8 +4,14 @@ export class ApiError extends Error {
   }
 }
 
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const targetUrl = path.startsWith("http")
+    ? path
+    : `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const response = await fetch(targetUrl, {
     ...init,
     headers: {
       ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),

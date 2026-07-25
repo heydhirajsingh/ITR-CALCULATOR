@@ -29,8 +29,9 @@ const formats = [
 
 export function ReportsPage() {
   const { financialYear } = useFinancialYear();
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
   const href = (kind: string, format: string) =>
-    `/api/reports/${kind}?financial_year=${encodeURIComponent(financialYear)}&format=${format}`;
+    `${apiBase}/api/reports/${kind}?financial_year=${encodeURIComponent(financialYear)}&format=${format}`;
 
   return (
     <div className="space-y-8">
