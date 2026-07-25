@@ -1,3 +1,4 @@
+// Vercel deployment build trigger
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
