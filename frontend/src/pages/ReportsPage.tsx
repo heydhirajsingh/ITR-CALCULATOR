@@ -29,7 +29,8 @@ const formats = [
 
 export function ReportsPage() {
   const { financialYear } = useFinancialYear();
-  const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+  const envObj = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+  const apiBase = (envObj.VITE_API_BASE_URL || "").replace(/\/$/, "");
   const href = (kind: string, format: string) =>
     `${apiBase}/api/reports/${kind}?financial_year=${encodeURIComponent(financialYear)}&format=${format}`;
 

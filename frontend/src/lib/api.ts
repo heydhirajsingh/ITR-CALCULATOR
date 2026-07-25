@@ -4,7 +4,8 @@ export class ApiError extends Error {
   }
 }
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const envObj = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+const BASE_URL = (envObj.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const targetUrl = path.startsWith("http")
