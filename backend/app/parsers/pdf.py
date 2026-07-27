@@ -122,12 +122,17 @@ class PdfParser(DocumentParser):
         txs: list[ParsedTransaction] = []
         date_pat = re.compile(r"^\d{2}/\d{2}/\d{2}$")
         bal_pat = re.compile(r"^[\d,]+\.\d{2}$")
+    def _extract_by_coordinates(
+        self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
+    ) -> list[ParsedTransaction]:
+        txs: list[ParsedTransaction] = []
+        date_pat = re.compile(r"^\d{2}/\d{2}/\d{2}$")
+        bal_pat = re.compile(r"^[\d,]+\.\d{2}$")
         try:
             with pdfplumber.open(path, password=password) as pdf:
+                # 1. Check for Federal Bank 9+ column structure first
                 for page in pdf.pages:
-                    # 1. First check extract_tables() for Federal, Equitas, IDFC, DCB
                     for t in page.extract_tables() or []:
-                        # Federal Bank 9+ column structure
                         for row in t:
                             if not row:
                                 continue
@@ -152,8 +157,11 @@ class PdfParser(DocumentParser):
                                             source_row=len(txs),
                                         )
                                     )
+                if txs:
+                    return txs
 
-                    # 2. HDFC Bank Coordinate Box Extraction
+                # 2. HDFC Bank Coordinate Box Extraction
+                for page in pdf.pages:
                     words = page.extract_words()
                     lines_by_top: dict[float, list[dict]] = {}
                     for w in words:
