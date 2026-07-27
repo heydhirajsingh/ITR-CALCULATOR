@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import fitz
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.classification.engine import classifier
@@ -162,22 +162,15 @@ class ImportManager:
 
     def delete_document(self, db: Session, document: Document) -> None:
         """Remove one document and all records derived from it."""
-
         document_id = document.id
         filename = document.filename
         stored_path = Path(document.stored_path)
         session_id = document.import_session_id
         self._clear_document_records(db, document_id)
-        db.query(TDS).filter(TDS.document_id == document_id).delete(synchronize_session=False)
-        db.query(ReviewQueue).filter(ReviewQueue.document_id == document_id).delete(synchronize_session=False)
-        db.query(Deduction).filter(
-            Deduction.evidence_document_id == document_id,
-            Deduction.suggested.is_(True),
-            Deduction.accepted.is_(False),
-        ).delete(synchronize_session=False)
-        db.query(Deduction).filter(Deduction.evidence_document_id == document_id).update(
-            {Deduction.evidence_document_id: None}, synchronize_session=False
-        )
+        db.execute(text(f"DELETE FROM tds WHERE document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM review_queue WHERE document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM deductions WHERE evidence_document_id = {document_id} AND suggested = 1 AND accepted = 0"))
+        db.execute(text(f"UPDATE deductions SET evidence_document_id = NULL WHERE evidence_document_id = {document_id}"))
         db.delete(document)
         session = db.get(ImportSession, session_id)
         if session:
@@ -205,7 +198,6 @@ class ImportManager:
         self._refresh_session(db, session_id)
 
     def submit_password(self, document_id: int, password: str) -> None:
-        # Validate synchronously so the API can immediately report a wrong password.
         with SessionLocal() as db:
             document = db.get(Document, document_id)
             if not document:
@@ -299,9 +291,6 @@ class ImportManager:
                             confidence=confidence,
                         )
                     )
-                # ZIP parts can finish parsing together. Serializing their database
-                # persistence prevents duplicate Bank/Account creation races and
-                # guarantees each later part can deduplicate against the earlier one.
                 with self._persistence_lock:
                     transaction_ids = self._persist_transactions(db, document, result.transactions)
                     self.duplicate_detector.process(db, transaction_ids)
@@ -359,39 +348,27 @@ class ImportManager:
             db.scalars(select(Transaction.id).where(Transaction.document_id == document_id)).all()
         )
         if transaction_ids:
-            db.query(Transaction).filter(Transaction.duplicate_of_id.in_(transaction_ids)).update(
-                {
-                    Transaction.duplicate_of_id: None,
-                    Transaction.is_duplicate: False,
-                    Transaction.duplicate_confidence: None,
-                },
-                synchronize_session=False,
-            )
-            linked_partners = db.scalars(
-                select(Transaction).where(Transaction.linked_transaction_id.in_(transaction_ids))
-            ).all()
-            for partner in linked_partners:
-                partner.linked_transaction_id = None
-                partner.is_self_transfer = False
-                partner.ignored = False
-                if partner.direction == TransactionDirection.credit:
-                    partner.needs_review = True
-            for model in (ReviewQueue, Income, Expense, Investment, Interest, Dividend):
-                db.query(model).filter(model.transaction_id.in_(transaction_ids)).delete(
-                    synchronize_session=False
+            id_list = ", ".join(str(tid) for tid in transaction_ids)
+            db.execute(text(f"DELETE FROM income WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM expenses WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM investments WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM interest WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM dividends WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM review_queue WHERE transaction_id IN ({id_list})"))
+            db.execute(text(f"DELETE FROM ais_entries WHERE linked_transaction_id IN ({id_list})"))
+            db.execute(
+                text(
+                    f"UPDATE transactions SET duplicate_of_id = NULL, linked_transaction_id = NULL "
+                    f"WHERE id IN ({id_list}) OR duplicate_of_id IN ({id_list}) OR linked_transaction_id IN ({id_list})"
                 )
-            db.query(Transaction).filter(Transaction.id.in_(transaction_ids)).delete(
-                synchronize_session=False
             )
-        db.query(AISEntry).filter(AISEntry.document_id == document_id).delete(synchronize_session=False)
-        db.query(Form26ASEntry).filter(Form26ASEntry.document_id == document_id).delete(
-            synchronize_session=False
-        )
-        db.query(Deduction).filter(
-            Deduction.evidence_document_id == document_id,
-            Deduction.suggested.is_(True),
-            Deduction.accepted.is_(False),
-        ).delete(synchronize_session=False)
+            db.execute(text(f"DELETE FROM transactions WHERE id IN ({id_list})"))
+
+        db.execute(text(f"DELETE FROM ais_entries WHERE document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM form_26as_entries WHERE document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM deductions WHERE evidence_document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM review_queue WHERE document_id = {document_id}"))
+        db.execute(text(f"DELETE FROM document_pages WHERE document_id = {document_id}"))
         db.flush()
 
     def _persist_transactions(
@@ -564,17 +541,17 @@ class ImportManager:
 
     @staticmethod
     def _suggest_deduction(db: Session, tax_year: TaxYear, document: Document, transaction: Transaction) -> None:
-        text = transaction.description.lower()
+        text_val = transaction.description.lower()
         suggestions: list[tuple[str, str]] = []
-        if any(token in text for token in ("ppf", "elss", "lic premium", "life insurance", "epf")):
+        if any(token in text_val for token in ("ppf", "elss", "lic premium", "life insurance", "epf")):
             suggestions.append(("80C", "Potential eligible investment/premium"))
-        if "nps" in text:
+        if "nps" in text_val:
             suggestions.append(("80CCD(1B)", "Potential NPS contribution"))
-        if any(token in text for token in ("health insurance", "medical insurance", "mediclaim")):
+        if any(token in text_val for token in ("health insurance", "medical insurance", "mediclaim")):
             suggestions.append(("80D", "Potential medical insurance premium"))
-        if "education loan" in text:
+        if "education loan" in text_val:
             suggestions.append(("80E", "Potential education-loan interest"))
-        if "donation" in text:
+        if "donation" in text_val:
             suggestions.append(("80G", "Potential eligible donation; verify donee and payment mode"))
         for section, description in suggestions:
             exists = db.scalar(
@@ -629,8 +606,6 @@ class ImportManager:
                 bank_id=bank.id if bank else None,
                 name=f"{effective_bank or 'Imported'} account",
                 masked_number=masked,
-                # Imported accounts are candidates until the user confirms ownership.
-                # This prevents false self-transfer suppression from parser mistakes.
                 is_owned=False,
                 metadata_json={"ownership_confirmed": False, "source": "automatic import"},
             )
@@ -681,8 +656,6 @@ class ImportManager:
         db.commit()
 
     def _refresh_session(self, db: Session, session_id: str) -> None:
-        # Multiple document workers can finish at nearly the same time. Serializing this
-        # aggregate update prevents lost updates in SQLite.
         with self._session_lock:
             db.expire_all()
             session = db.get(ImportSession, session_id)
