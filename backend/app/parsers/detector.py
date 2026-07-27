@@ -67,45 +67,50 @@ def detect_bank(filename: str, text: str = "") -> str | None:
     compact_filename = re.sub(r"[^a-z0-9]", "", filename_text)
     header = text[:800].lower()
     aliases = {
-        "HDFC Bank": ("hdfc", "chq./ref.no."),
-        "State Bank of India": ("state bank of india", "sbi"),
-        "ICICI Bank": ("icici",),
-        "Axis Bank": ("axis bank", "axis"),
-        "Kotak Mahindra Bank": ("kotak",),
-        "IDFC First Bank": ("idfc first", "idfc"),
-        "Punjab National Bank": ("punjab national bank", "pnb"),
-        "Bank of Baroda": ("bank of baroda", "bob"),
-        "DCB Bank": ("dcb bank", "dcb"),
-        "Federal Bank": ("federal bank", "federal", "fedmobile"),
-        "Equitas Bank": ("equitas bank", "equitas", "equitas small finance bank"),
-        "AU Small Finance Bank": ("au bank", "au small finance", "au small finance bank", "aubank"),
-        "Canara Bank": ("canara bank", "canara"),
-        "Union Bank of India": ("union bank of india", "union bank", "ubi"),
-        "IndusInd Bank": ("indusind bank", "indusind"),
-        "Yes Bank": ("yes bank", "yesbank"),
-        "RBL Bank": ("rbl bank", "rbl", "ratnakar"),
-        "Central Bank of India": ("central bank", "cbi"),
-        "Indian Bank": ("indian bank",),
-        "Bank of India": ("bank of india", "boi"),
-        "Bandhan Bank": ("bandhan bank", "bandhan"),
-        "UCO Bank": ("uco bank", "uco"),
-        "South Indian Bank": ("south indian bank", "sib"),
-        "Karur Vysya Bank": ("karur vysya", "kvb"),
-        "City Union Bank": ("city union bank", "cub"),
-        "Karnataka Bank": ("karnataka bank",),
-        "Standard Chartered": ("standard chartered", "scb"),
-        "HSBC": ("hsbc",),
-        "Citi Bank": ("citibank", "citi"),
+        "HDFC Bank": ("hdfc", "chq./ref.no.", r"HDFC0[A-Z0-9]{6}"),
+        "State Bank of India": ("state bank of india", "sbi", r"SBIN0[A-Z0-9]{6}"),
+        "ICICI Bank": ("icici", r"ICIC0[A-Z0-9]{6}"),
+        "Axis Bank": ("axis bank", "axis", r"UTIB0[A-Z0-9]{6}"),
+        "Kotak Mahindra Bank": ("kotak", r"KKBK0[A-Z0-9]{6}"),
+        "IDFC First Bank": ("idfc first", "idfc", r"IDFB0[A-Z0-9]{6}"),
+        "Punjab National Bank": ("punjab national bank", "pnb", r"PUNB0[A-Z0-9]{6}"),
+        "Bank of Baroda": ("bank of baroda", "bob", r"BARB0[A-Z0-9]{6}"),
+        "DCB Bank": ("dcb bank", "dcb", r"DCBL0[A-Z0-9]{6}"),
+        "Federal Bank": ("federal bank", "federal", "fedmobile", r"FDRL0[A-Z0-9]{6}"),
+        "Equitas Bank": ("equitas bank", "equitas", "equitas small finance bank", r"ESFB0[A-Z0-9]{6}", "e q u i t a s"),
+        "AU Small Finance Bank": ("au bank", "au small finance", "au small finance bank", "aubank", r"AUBL0[A-Z0-9]{6}"),
+        "Canara Bank": ("canara bank", "canara", r"CNRB0[A-Z0-9]{6}"),
+        "Union Bank of India": ("union bank of india", "union bank", "ubi", r"UBIN0[A-Z0-9]{6}"),
+        "IndusInd Bank": ("indusind bank", "indusind", r"INDB0[A-Z0-9]{6}"),
+        "Yes Bank": ("yes bank", "yesbank", r"YESB0[A-Z0-9]{6}"),
+        "RBL Bank": ("rbl bank", "rbl", "ratnakar", r"RATN0[A-Z0-9]{6}"),
+        "Central Bank of India": ("central bank", "cbi", r"CBIN0[A-Z0-9]{6}"),
+        "Indian Bank": ("indian bank", r"IDIB0[A-Z0-9]{6}"),
+        "Bank of India": ("bank of india", "boi", r"BKID0[A-Z0-9]{6}"),
+        "Bandhan Bank": ("bandhan bank", "bandhan", r"BDBL0[A-Z0-9]{6}"),
+        "UCO Bank": ("uco bank", "uco", r"UCBA0[A-Z0-9]{6}"),
+        "South Indian Bank": ("south indian bank", "sib", r"SIBL0[A-Z0-9]{6}"),
+        "Karur Vysya Bank": ("karur vysya", "kvb", r"KVBL0[A-Z0-9]{6}"),
+        "City Union Bank": ("city union bank", "cub", r"CIUB0[A-Z0-9]{6}"),
+        "Karnataka Bank": ("karnataka bank", r"KARB0[A-Z0-9]{6}"),
+        "Standard Chartered": ("standard chartered", "scb", r"SCBL0[A-Z0-9]{6}"),
+        "HSBC": ("hsbc", r"HSBC0[A-Z0-9]{6}"),
+        "Citi Bank": ("citibank", "citi", r"CITI0[A-Z0-9]{6}"),
     }
     scored: list[tuple[int, str]] = []
     for bank, names in aliases.items():
         score = 0
         for alias in names:
-            pattern = rf"(?<!@)\b{re.escape(alias)}\b"
-            compact_alias = re.sub(r"[^a-z0-9]", "", alias)
-            if compact_alias in compact_filename:
+            if alias.startswith(r"^[A-Z]{4}0") or "0[" in alias:  # Quick heuristic for IFSC regex
+                pattern = alias
+                compact_alias = ""
+            else:
+                pattern = rf"(?<!@)\b{re.escape(alias)}\b"
+                compact_alias = re.sub(r"[^a-z0-9]", "", alias)
+
+            if compact_alias and compact_alias in compact_filename:
                 score += 100
-            if re.search(pattern, header):
+            if re.search(pattern, header, re.IGNORECASE):
                 score += 20
         if score:
             scored.append((score, bank))

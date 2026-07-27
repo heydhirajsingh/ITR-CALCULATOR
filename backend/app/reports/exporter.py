@@ -277,10 +277,16 @@ class _PdfWriter:
             if _is_numeric_col(col):
                 try:
                     fval = float(raw)
-                    if fval > 0:
-                        text_color = _POS
-                    elif fval < 0:
-                        text_color = _NEG
+                    if "debit" in col.lower():
+                        if fval > 0:
+                            text_color = _NEG
+                        elif fval < 0:
+                            text_color = _POS
+                    else:
+                        if fval > 0:
+                            text_color = _POS
+                        elif fval < 0:
+                            text_color = _NEG
                 except (ValueError, TypeError):
                     pass
             page.insert_textbox(
@@ -584,7 +590,10 @@ class ReportExporter:
                                 cell.value = fval
                                 cell.number_format = "#,##0.00"
                                 cell.alignment = Alignment(horizontal="right", vertical="center")
-                                fnt_color = pos_font_color if fval > 0 else (neg_font_color if fval < 0 else "0F172A")
+                                if "debit" in col.lower():
+                                    fnt_color = neg_font_color if fval > 0 else (pos_font_color if fval < 0 else "0F172A")
+                                else:
+                                    fnt_color = pos_font_color if fval > 0 else (neg_font_color if fval < 0 else "0F172A")
                                 cell.font = Font(name="Calibri", size=9, color=fnt_color)
                             except (ValueError, TypeError):
                                 cell.value = raw_val
