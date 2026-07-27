@@ -870,6 +870,9 @@ def _document_dict(document: Document) -> dict:
 
 
 def _transaction_dict(transaction: Transaction, filename: str | None, document_type: str | None) -> dict:
+    direction_str = transaction.direction.value if hasattr(transaction, "direction") and hasattr(transaction.direction, "value") else "credit"
+    counterparty = classifier.extract_counterparty(transaction.description, direction=direction_str)
+
     return {
         "id": transaction.id,
         "date": transaction.transaction_date,
@@ -883,7 +886,7 @@ def _transaction_dict(transaction: Transaction, filename: str | None, document_t
         "mode": transaction.mode,
         "category": transaction.category,
         "income_type": transaction.income_type,
-        "counterparty": transaction.counterparty,
+        "counterparty": counterparty,
         "bank": transaction.bank_name,
         "taxable": transaction.taxable,
         "exempt": transaction.exempt,

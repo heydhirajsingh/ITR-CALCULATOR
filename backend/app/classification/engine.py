@@ -106,9 +106,20 @@ KNOWN_BANKS = {
     "DFB": "DFB Bank",
     "DCBL": "DCB Bank",
     "EQUA": "Equitas Bank",
+    "FDRL": "Federal Bank",
+}
+
+SKIP_TOKENS = {
+    "upi", "neft", "rtgs", "imps", "impstxn", "reqpay", "mandaterequest",
+    "p2p", "p2m", "p2a", "cr", "dr", "txn", "transaction", "ref", "reference",
+    "payment", "transfer", "na", "val", "dt", "head", "office", "on"
 }
 
 COUNTERPARTY_SEPARATORS = re.compile(r"[/|:@#-]+")
+
+
+def is_ifsc(token: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]{4}0[A-Za-z0-9]{6}$", token))
 
 
 class ClassificationEngine:
@@ -209,75 +220,86 @@ class ClassificationEngine:
         if not s:
             return None
 
-        # Date-only narration
-        if re.search(r"^transaction\s+on\s+\d{1,2}/\d{1,2}/\d{2,4}$", s, re.IGNORECASE):
-            return "Direct Deposit" if direction == "credit" else "Direct Withdrawal"
+        # Date-only narration like 'Transaction on 30/09/25'
+        if re.search(r"transaction\s+on\s+\d{1,2}/\d{1,2}/\d{2,4}", s, re.IGNORECASE) or s.lower().startswith("transaction on"):
+            return "Direct Bank Credit" if direction == "credit" else "Direct Bank Debit"
 
-        # 1. P2P / P2M pattern (e.g. 645413629379 P2M- DHIRAJ KUMAR SINGH-69C9...)
+        # REQPAY / Bank Transfer pattern like -SBIN-XXXXXXXXXXXX1193-REQPAY
+        reqpay = re.search(r"[-/]?([A-Za-z]{2,5})[-/][X*]*(\d{4})[-/](REQPAY|IMPSTXN|IMPS|NEFT|UPI)", s, re.IGNORECASE)
+        if reqpay:
+            bank_code = reqpay.group(1).upper()
+            bank_name = KNOWN_BANKS.get(bank_code, f"{bank_code} Bank")
+            mode = reqpay.group(3).upper()
+            if mode == "IMPSTXN":
+                mode = "IMPS"
+            elif mode == "REQPAY":
+                mode = "UPI Request"
+            return f"{mode} ({bank_name} A/c ...{reqpay.group(2)})"
+
+        # IMPS / DFB pattern like DFB-XXXXXXX1708-IMPSTXN
+        imps_acct = re.search(r"([A-Za-z]{2,5})[-/][X*]*(\d{4})[-/](IMPSTXN|IMPS|NEFT|RTGS)", s, re.IGNORECASE)
+        if imps_acct:
+            bank_code = imps_acct.group(1).upper()
+            bank_name = KNOWN_BANKS.get(bank_code, f"{bank_code} Bank")
+            mode = imps_acct.group(3).upper()
+            if mode == "IMPSTXN":
+                mode = "IMPS"
+            return f"{mode} ({bank_name} A/c ...{imps_acct.group(2)})"
+
+        # P2P / P2M pattern (e.g. 645413629379 P2M- DHIRAJ KUMAR SINGH-...)
         p2p = re.search(r"P2[PM][-\s]+([A-Za-z0-9\s.'&]+?)(?:-[A-Za-z0-9]+|-(?:UPI|PAYMENT|SENT|HEAD)|$)", s, re.IGNORECASE)
         if p2p:
             raw_p2p = p2p.group(1).strip()
             raw_p2p = re.sub(r"\b(?:UPI|OKAXIS|PTSBI|OKICICI|OKHDFC|YBL|SENT|PAYMENT|FROM|USING|HEAD|OFFICE)\b.*", "", raw_p2p, flags=re.IGNORECASE).strip()
-            if len(raw_p2p) >= 2 and not raw_p2p.isdigit():
+            if len(raw_p2p) >= 2 and not raw_p2p.isdigit() and not is_ifsc(raw_p2p):
                 return raw_p2p.title()
 
-        # 2. NEFT pattern (e.g. NEFT CR-UTIB0000022- PAYTM PAYMENTS SERVICES LTD-...)
+        # NEFT pattern (e.g. NEFT CR-UTIB0000022- PAYTM PAYMENTS SERVICES LTD-...)
         neft = re.search(r"NEFT\s+(?:CR|DR)?[-/]\s*(?:[A-Za-z0-9]+[-/]\s*)?([A-Za-z0-9\s.&]+?)(?:[-/]\s*PAYMENT|[-/]\s*UTIB|[-/]\s*YESB|[-/]\s*HDFC|[-/]\d{6,}|$)", s, re.IGNORECASE)
         if neft:
             raw_neft = neft.group(1).strip()
-            if len(raw_neft) >= 3 and not raw_neft.isdigit():
+            if len(raw_neft) >= 3 and not raw_neft.isdigit() and not is_ifsc(raw_neft):
                 return raw_neft.title()
 
-        # 3. IMPS pattern (e.g. IMPS/608626911937/ GOOGLEINDIADIGI/ UTIB...)
+        # IMPS pattern (e.g. IMPS/608626911937/ GOOGLEINDIADIGI/ UTIB...)
         imps = re.search(r"IMPS/(?:\d+/)?\s*([A-Za-z0-9\s.&]+?)/(?:\s*[A-Za-z0-9]+|\d+|$)", s, re.IGNORECASE)
         if imps:
             raw_imps = imps.group(1).strip()
-            if len(raw_imps) >= 3 and not raw_imps.isdigit():
+            if len(raw_imps) >= 3 and not raw_imps.isdigit() and not is_ifsc(raw_imps):
                 return raw_imps.title()
 
-        # 4. Standard UPI pattern: UPI-NAME-VPA...
+        # Standard UPI pattern: UPI-NAME-VPA...
         upi_match = re.search(r"UPI[-/]([A-Za-z0-9\s.'&]+?)[-/]([A-Za-z0-9._@]+)", s, re.IGNORECASE)
         if upi_match:
             raw_name = upi_match.group(1).strip()
-            if len(raw_name) >= 2 and not raw_name.isdigit():
+            if len(raw_name) >= 2 and not raw_name.isdigit() and not is_ifsc(raw_name):
                 return re.sub(r"\s+", " ", raw_name).title()
 
-        # 5. IMPS / DFB pattern like DFB-XXXXXXX1708-IMPSTXN
-        imps_acct = re.search(r"([A-Za-z]{2,5})[-/][X*]*(\d{4})[-/](IMPSTXN|IMPS|NEFT|RTGS)", s, re.IGNORECASE)
-        if imps_acct:
-            bank_code = imps_acct.group(1).upper()
-            bank_name = KNOWN_BANKS.get(bank_code, bank_code)
-            mode = imps_acct.group(3).upper()
-            if mode == "IMPSTXN":
-                mode = "IMPS"
-            return f"{mode} Transfer ({bank_name} A/c ...{imps_acct.group(2)})"
-
-        # 6. Bank prefix patterns like AXIS-SBIN0007703-390382541965-UPI
+        # Standard Bank prefix patterns like AXIS-SBIN0007703-390382541965-UPI
         bank_codes = [code for code in KNOWN_BANKS if code in s.upper()]
         if bank_codes:
             bank_names = " / ".join([KNOWN_BANKS[c] for c in bank_codes[:2]])
             mode = "UPI" if "UPI" in s.upper() else "IMPS" if "IMPS" in s.upper() else "NEFT" if "NEFT" in s.upper() else "Bank Transfer"
             acct_match = re.search(r"[X*]+(\d{4})", s, re.IGNORECASE)
             acct_str = f" (A/c ...{acct_match.group(1)})" if acct_match else ""
-            return f"{mode} via {bank_names}{acct_str}"
+            return f"{bank_names} ({mode}){acct_str}"
 
-        # 7. General text cleaning
+        # Clean general parts
         parts = [p.strip() for p in COUNTERPARTY_SEPARATORS.split(s) if p.strip()]
-        skip = {"upi", "neft", "rtgs", "imps", "impstxn", "cr", "dr", "txn", "transaction", "ref", "reference", "payment", "transfer", "na", "mandaterequest", "val", "dt"}
         cleaned = []
         for p in parts:
             pl = p.lower()
-            if pl in skip or p.isdigit() or re.match(r"^\d+[a-z]+$", pl) or re.match(r"^[a-z]+\d+$", pl) or re.match(r"^x+$", pl):
+            if pl in SKIP_TOKENS or p.isdigit() or is_ifsc(p) or re.match(r"^\d+[a-z]+$", pl) or re.match(r"^[a-z]+\d+$", pl) or re.match(r"^[x*]+$", pl):
                 continue
             cleaned.append(p)
 
         if cleaned:
             res = " ".join(cleaned)
-            res = re.sub(r"X{3,}\d*", "", res, flags=re.IGNORECASE).strip()
-            if res:
+            res = re.sub(r"[X*]{3,}\d*", "", res, flags=re.IGNORECASE).strip()
+            if res and not res.isdigit() and not is_ifsc(res):
                 return res.title()
 
-        return s.title()
+        return "Direct Bank Credit" if direction == "credit" else "Direct Bank Debit"
 
 
 classifier = ClassificationEngine()
