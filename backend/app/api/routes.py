@@ -555,6 +555,7 @@ def review_groups(financial_year: str = "FY 2025-26", db: Session = Depends(get_
                 "review_ids": [],
                 "category": transaction.category,
                 "sample_description": transaction.description,
+                "counterparty": transaction.counterparty or classifier.extract_counterparty(transaction.description, direction=direction),
                 "confidence_total": 0.0,
             },
         )

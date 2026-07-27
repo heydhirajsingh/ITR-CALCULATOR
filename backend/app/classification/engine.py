@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable
 
 from rapidfuzz.fuzz import partial_ratio
 
@@ -91,6 +90,24 @@ MODE_PATTERNS = {
     "Card": ("pos", "card", "ecom"),
 }
 
+KNOWN_BANKS = {
+    "SBIN": "State Bank of India",
+    "ICIC": "ICICI Bank",
+    "HDFC": "HDFC Bank",
+    "AXIS": "Axis Bank",
+    "KKBK": "Kotak Mahindra Bank",
+    "UTIB": "Axis Bank",
+    "UBIN": "Union Bank",
+    "BARB": "Bank of Baroda",
+    "PUNB": "Punjab National Bank",
+    "CBIN": "Central Bank of India",
+    "IDFB": "IDFC First Bank",
+    "YESB": "Yes Bank",
+    "DFB": "DFB Bank",
+    "DCBL": "DCB Bank",
+    "EQUA": "Equitas Bank",
+}
+
 COUNTERPARTY_SEPARATORS = re.compile(r"[/|:@#-]+")
 
 
@@ -122,16 +139,15 @@ class ClassificationEngine:
                 score = min(rule.confidence - 8, float(fuzzy))
                 candidates.append((score, rule, f"fuzzy narration match {fuzzy:.0f}%"))
 
+        counterparty = self.extract_counterparty(description, direction=direction)
+
         if candidates:
             confidence, rule, reason = max(candidates, key=lambda item: item[0])
-            # Expense categories may be low-confidence without affecting tax. Keep the
-            # review queue focused on credits and explicit tax-sensitive exceptions.
             needs_review = bool(credit > 0 and (rule.review_credit or confidence < 85))
             taxable = bool(credit > 0 and rule.taxable_credit and not rule.ignore_credit)
             exempt = bool(credit > 0 and rule.exempt_credit)
             ignored = bool(credit > 0 and rule.ignore_credit and not needs_review)
             if document_type in {"AIS", "Form 26AS", "Form 16", "Form 16A"} and credit > 0:
-                # These are evidence sources. Deduplication decides whether they count independently.
                 confidence = min(99.0, confidence + 2)
             return ClassificationResult(
                 category=rule.category,
@@ -143,7 +159,7 @@ class ClassificationEngine:
                 confidence=confidence,
                 reason=reason,
                 mode=self.detect_mode(normalized),
-                counterparty=self.extract_counterparty(description),
+                counterparty=counterparty,
             )
 
         if credit > 0:
@@ -157,7 +173,7 @@ class ClassificationEngine:
                 confidence=40.0,
                 reason="unclassified credit; conservative review required",
                 mode=self.detect_mode(normalized),
-                counterparty=self.extract_counterparty(description),
+                counterparty=counterparty,
             )
         return ClassificationResult(
             category="Other",
@@ -169,7 +185,7 @@ class ClassificationEngine:
             confidence=55.0,
             reason="unclassified debit",
             mode=self.detect_mode(normalized),
-            counterparty=self.extract_counterparty(description),
+            counterparty=counterparty,
         )
 
     @staticmethod
@@ -188,14 +204,58 @@ class ClassificationEngine:
         return None
 
     @staticmethod
-    def extract_counterparty(description: str) -> str | None:
-        tokens = [token.strip() for token in COUNTERPARTY_SEPARATORS.split(description) if token.strip()]
-        skip = {"upi", "neft", "rtgs", "imps", "cr", "dr", "txn", "ref", "transfer", "payment"}
-        candidates = [token for token in tokens if token.lower() not in skip and not token.isdigit()]
-        for token in reversed(candidates):
-            if 3 <= len(token) <= 80 and sum(char.isalpha() for char in token) >= 2:
-                return token.title()
-        return None
+    def extract_counterparty(description: str, direction: str = "credit") -> str | None:
+        s = description.strip()
+        if not s:
+            return None
+
+        # Date-only narration
+        if re.search(r"^transaction\s+on\s+\d{1,2}/\d{1,2}/\d{2,4}$", s, re.IGNORECASE):
+            return "Direct Deposit" if direction == "credit" else "Direct Withdrawal"
+
+        # UPI Pattern: UPI-NAME-VPA...
+        upi_match = re.search(r"UPI[-/]([A-Za-z0-9\s.'&]+?)[-/]([A-Za-z0-9._@]+)", s, re.IGNORECASE)
+        if upi_match:
+            raw_name = upi_match.group(1).strip()
+            if len(raw_name) >= 2 and not raw_name.isdigit():
+                return re.sub(r"\s+", " ", raw_name).title()
+
+        # IMPS / DFB pattern like DFB-XXXXXXX1708-IMPSTXN
+        imps_acct = re.search(r"([A-Za-z]{2,5})[-/][X*]*(\d{4})[-/](IMPSTXN|IMPS|NEFT|RTGS)", s, re.IGNORECASE)
+        if imps_acct:
+            bank_code = imps_acct.group(1).upper()
+            bank_name = KNOWN_BANKS.get(bank_code, bank_code)
+            mode = imps_acct.group(3).upper()
+            if mode == "IMPSTXN":
+                mode = "IMPS"
+            return f"{mode} Transfer ({bank_name} A/c ...{imps_acct.group(2)})"
+
+        # Standard Bank prefix patterns like AXIS-SBIN0007703-390382541965-UPI
+        bank_codes = [code for code in KNOWN_BANKS if code in s.upper()]
+        if bank_codes:
+            bank_names = " / ".join([KNOWN_BANKS[c] for c in bank_codes[:2]])
+            mode = "UPI" if "UPI" in s.upper() else "IMPS" if "IMPS" in s.upper() else "NEFT" if "NEFT" in s.upper() else "Bank Transfer"
+            acct_match = re.search(r"[X*]+(\d{4})", s, re.IGNORECASE)
+            acct_str = f" (A/c ...{acct_match.group(1)})" if acct_match else ""
+            return f"{mode} via {bank_names}{acct_str}"
+
+        # General text cleaning for merchant / counterparty names
+        parts = [p.strip() for p in COUNTERPARTY_SEPARATORS.split(s) if p.strip()]
+        skip = {"upi", "neft", "rtgs", "imps", "impstxn", "cr", "dr", "txn", "transaction", "ref", "reference", "payment", "transfer", "na", "mandaterequest", "val", "dt"}
+        cleaned = []
+        for p in parts:
+            pl = p.lower()
+            if pl in skip or p.isdigit() or re.match(r"^\d+[a-z]+$", pl) or re.match(r"^[a-z]+\d+$", pl) or re.match(r"^x+$", pl):
+                continue
+            cleaned.append(p)
+
+        if cleaned:
+            res = " ".join(cleaned)
+            res = re.sub(r"X{3,}\d*", "", res, flags=re.IGNORECASE).strip()
+            if res:
+                return res.title()
+
+        return s.title()
 
 
 classifier = ClassificationEngine()
