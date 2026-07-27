@@ -95,7 +95,7 @@ KNOWN_BANKS = {
     "ICIC": "ICICI Bank",
     "HDFC": "HDFC Bank",
     "AXIS": "Axis Bank",
-    "KKBK": "Kotak Mahindra Bank",
+    "KKBK": "Kotak Bank",
     "UTIB": "Axis Bank",
     "UBIN": "Union Bank",
     "BARB": "Bank of Baroda",
@@ -213,14 +213,36 @@ class ClassificationEngine:
         if re.search(r"^transaction\s+on\s+\d{1,2}/\d{1,2}/\d{2,4}$", s, re.IGNORECASE):
             return "Direct Deposit" if direction == "credit" else "Direct Withdrawal"
 
-        # UPI Pattern: UPI-NAME-VPA...
+        # 1. P2P / P2M pattern (e.g. 645413629379 P2M- DHIRAJ KUMAR SINGH-69C9...)
+        p2p = re.search(r"P2[PM][-\s]+([A-Za-z0-9\s.'&]+?)(?:-[A-Za-z0-9]+|-(?:UPI|PAYMENT|SENT|HEAD)|$)", s, re.IGNORECASE)
+        if p2p:
+            raw_p2p = p2p.group(1).strip()
+            raw_p2p = re.sub(r"\b(?:UPI|OKAXIS|PTSBI|OKICICI|OKHDFC|YBL|SENT|PAYMENT|FROM|USING|HEAD|OFFICE)\b.*", "", raw_p2p, flags=re.IGNORECASE).strip()
+            if len(raw_p2p) >= 2 and not raw_p2p.isdigit():
+                return raw_p2p.title()
+
+        # 2. NEFT pattern (e.g. NEFT CR-UTIB0000022- PAYTM PAYMENTS SERVICES LTD-...)
+        neft = re.search(r"NEFT\s+(?:CR|DR)?[-/]\s*(?:[A-Za-z0-9]+[-/]\s*)?([A-Za-z0-9\s.&]+?)(?:[-/]\s*PAYMENT|[-/]\s*UTIB|[-/]\s*YESB|[-/]\s*HDFC|[-/]\d{6,}|$)", s, re.IGNORECASE)
+        if neft:
+            raw_neft = neft.group(1).strip()
+            if len(raw_neft) >= 3 and not raw_neft.isdigit():
+                return raw_neft.title()
+
+        # 3. IMPS pattern (e.g. IMPS/608626911937/ GOOGLEINDIADIGI/ UTIB...)
+        imps = re.search(r"IMPS/(?:\d+/)?\s*([A-Za-z0-9\s.&]+?)/(?:\s*[A-Za-z0-9]+|\d+|$)", s, re.IGNORECASE)
+        if imps:
+            raw_imps = imps.group(1).strip()
+            if len(raw_imps) >= 3 and not raw_imps.isdigit():
+                return raw_imps.title()
+
+        # 4. Standard UPI pattern: UPI-NAME-VPA...
         upi_match = re.search(r"UPI[-/]([A-Za-z0-9\s.'&]+?)[-/]([A-Za-z0-9._@]+)", s, re.IGNORECASE)
         if upi_match:
             raw_name = upi_match.group(1).strip()
             if len(raw_name) >= 2 and not raw_name.isdigit():
                 return re.sub(r"\s+", " ", raw_name).title()
 
-        # IMPS / DFB pattern like DFB-XXXXXXX1708-IMPSTXN
+        # 5. IMPS / DFB pattern like DFB-XXXXXXX1708-IMPSTXN
         imps_acct = re.search(r"([A-Za-z]{2,5})[-/][X*]*(\d{4})[-/](IMPSTXN|IMPS|NEFT|RTGS)", s, re.IGNORECASE)
         if imps_acct:
             bank_code = imps_acct.group(1).upper()
@@ -230,7 +252,7 @@ class ClassificationEngine:
                 mode = "IMPS"
             return f"{mode} Transfer ({bank_name} A/c ...{imps_acct.group(2)})"
 
-        # Standard Bank prefix patterns like AXIS-SBIN0007703-390382541965-UPI
+        # 6. Bank prefix patterns like AXIS-SBIN0007703-390382541965-UPI
         bank_codes = [code for code in KNOWN_BANKS if code in s.upper()]
         if bank_codes:
             bank_names = " / ".join([KNOWN_BANKS[c] for c in bank_codes[:2]])
@@ -239,7 +261,7 @@ class ClassificationEngine:
             acct_str = f" (A/c ...{acct_match.group(1)})" if acct_match else ""
             return f"{mode} via {bank_names}{acct_str}"
 
-        # General text cleaning for merchant / counterparty names
+        # 7. General text cleaning
         parts = [p.strip() for p in COUNTERPARTY_SEPARATORS.split(s) if p.strip()]
         skip = {"upi", "neft", "rtgs", "imps", "impstxn", "cr", "dr", "txn", "transaction", "ref", "reference", "payment", "transfer", "na", "mandaterequest", "val", "dt"}
         cleaned = []
