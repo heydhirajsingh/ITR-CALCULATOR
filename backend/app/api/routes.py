@@ -798,6 +798,22 @@ def update_profile(request: UserProfileUpdate, db: Session = Depends(get_db)) ->
 
 
 def _document_dict(document: Document) -> dict:
+    raw_warnings = document.warnings or []
+    detected_bank = document.detected_bank
+    if not detected_bank and document.filename:
+        detected_bank = detect_bank(document.filename)
+        if detected_bank:
+            document.detected_bank = detected_bank
+
+    cleaned_warnings = []
+    for warning in raw_warnings:
+        w = warning.lower()
+        if "camelot fallback" in w or "tabula fallback" in w or "both debit and credit" in w:
+            continue
+        if detected_bank and "issuing institution could not be confirmed" in w:
+            continue
+        cleaned_warnings.append(warning)
+
     return {
         "id": document.id,
         "filename": document.filename,
@@ -806,11 +822,11 @@ def _document_dict(document: Document) -> dict:
         "is_encrypted": document.is_encrypted,
         "page_count": document.page_count,
         "parser_used": document.parser_used,
-        "detected_bank": document.detected_bank,
+        "detected_bank": detected_bank,
         "error_message": document.error_message,
-        "warnings": document.warnings or [],
+        "warnings": cleaned_warnings,
         "is_file_duplicate": document.status == DocumentStatus.skipped
-        and any("exact duplicate" in warning.lower() for warning in (document.warnings or [])),
+        and any("exact duplicate" in warning.lower() for warning in raw_warnings),
         "created_at": document.created_at,
     }
 
