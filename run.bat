@@ -7,13 +7,14 @@ echo             Starting Local ITR Calculator
 echo ===================================================
 echo.
 
-if not exist "frontend\node_modules\.bin\tsc.cmd" (
+if not exist "%~dp0frontend\node_modules\.bin\tsc.cmd" (
     echo [setup] Installing frontend dependencies...
-    cd frontend
-    call npm install --no-package-lock --no-audit --no-fund --legacy-peer-deps
-    cd ..
+    pushd "%~dp0frontend"
+    call npm install --no-audit --no-fund
+    popd
 )
 
+cd /d "%~dp0"
 echo [setup] Starting application and opening browser...
 python main.py %*
 
