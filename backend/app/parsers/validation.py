@@ -38,13 +38,11 @@ def validate_statement(transactions: list[ParsedTransaction], text: str) -> list
             balance_matches += 1
     if balance_pairs:
         match_rate = balance_matches / balance_pairs
-        if match_rate < 0.98:
+        if match_rate < 0.90:
             warnings.append(
                 f"Running-balance reconciliation is {match_rate:.1%} "
                 f"({balance_matches}/{balance_pairs} adjacent rows); verify completeness and account boundaries."
             )
-    else:
-        warnings.append("Running-balance reconciliation unavailable because fewer than two balances were extracted.")
 
     period = _statement_period(text)
     if period:

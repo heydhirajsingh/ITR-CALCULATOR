@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import fitz
@@ -83,6 +84,8 @@ class PdfParser(DocumentParser):
             transactions.extend(self._extract_tabula(path, password, bank_name, account_number))
         if not transactions:
             transactions.extend(_parse_text_lines(full_text, bank_name, account_number))
+        if not transactions:
+            transactions.extend(_parse_multiline_blocks(full_text, bank_name, account_number))
         if not transactions:
             warnings.append("No transaction rows could be normalized automatically; extracted text is retained for review.")
         else:
@@ -209,3 +212,87 @@ def _try_parse_line(
         account_number=account_number,
         source_row=source_row,
     )
+
+
+def _parse_multiline_blocks(
+    full_text: str, bank_name: str | None, account_number: str | None
+) -> list[ParsedTransaction]:
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    date_re = re.compile(r"^\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}$")
+    amount_re = re.compile(r"^[\d,]+\.\d{2}$")
+    ref_re = re.compile(r"^\d{10,22}$")
+
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if date_re.match(line):
+            if current:
+                blocks.append(current)
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    results: list[ParsedTransaction] = []
+    prev_balance: Decimal | None = None
+
+    for row_index, block in enumerate(blocks, start=1):
+        t_date = parse_date(block[0])
+        if not t_date:
+            continue
+        amounts = [parse_amount(line) for line in block if amount_re.match(line)]
+        refs = [line for line in block if ref_re.match(line)]
+        text_lines = [
+            line
+            for line in block[1:]
+            if not amount_re.match(line) and not ref_re.match(line) and not date_re.match(line)
+        ]
+        desc = " ".join(text_lines).strip()
+        if not desc:
+            desc = f"Transaction on {block[0]}"
+        if not amounts:
+            continue
+
+        balance = amounts[-1] if len(amounts) >= 2 else None
+        txn_amount = amounts[0] if len(amounts) >= 2 else amounts[0]
+        if txn_amount <= 0:
+            continue
+
+        debit = Decimal("0")
+        credit = Decimal("0")
+        if prev_balance is not None and balance is not None:
+            if balance > prev_balance:
+                credit = txn_amount
+            else:
+                debit = txn_amount
+        else:
+            if any(kw in desc.lower() for kw in ("cr", "deposit", "interest", "refund", "salary")):
+                credit = txn_amount
+            else:
+                debit = txn_amount
+
+        if balance is not None:
+            prev_balance = balance
+
+        results.append(
+            ParsedTransaction(
+                transaction_date=t_date,
+                value_date=None,
+                description=desc,
+                narration=desc,
+                debit=debit,
+                credit=credit,
+                balance=balance,
+                reference_number=refs[0] if refs else None,
+                utr=refs[0] if refs else None,
+                bank_name=bank_name,
+                account_number=account_number,
+                source_row=row_index,
+            )
+        )
+
+    return results
