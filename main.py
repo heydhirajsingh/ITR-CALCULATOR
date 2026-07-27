@@ -74,8 +74,8 @@ def build_frontend(force: bool = False) -> None:
     if not npm:
         raise RuntimeError("Node.js 18+ and npm are required to build the React frontend.")
     node_modules = FRONTEND_DIR / "node_modules"
-    package_lock = FRONTEND_DIR / "package-lock.json"
-    if not node_modules.exists() or not package_lock.exists():
+    tsc_bin = node_modules / ".bin" / ("tsc.cmd" if os.name == "nt" else "tsc")
+    if not node_modules.exists() or not tsc_bin.exists():
         print("[setup] Installing frontend dependencies locally...")
         subprocess.run([npm, "install"], cwd=FRONTEND_DIR, check=True)
     index = FRONTEND_DIR / "dist" / "index.html"
