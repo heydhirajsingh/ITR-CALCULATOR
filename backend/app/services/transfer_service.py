@@ -1,4 +1,4 @@
-"""Self-transfer matching across owned accounts with reference and narration similarity."""
+"""Self-transfer matching across owned accounts with reference, name, and narration similarity."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -17,17 +17,54 @@ class SelfTransferDetector:
         self.day_window = get_settings().self_transfer_day_window
 
     def process(self, db: Session, transaction_ids: list[int]) -> int:
+        user = db.scalar(select(User).order_by(User.id).limit(1))
+        user_name_parts: set[str] = set()
+        user_upi_parts: set[str] = set()
+        if user:
+            if user.name and user.name.strip():
+                for word in user.name.split():
+                    w = word.lower().strip()
+                    if len(w) >= 3 and w not in {"mr", "mrs", "dr", "shri", "smt"}:
+                        user_name_parts.add(w)
+            if user.upi_ids:
+                for upi in user.upi_ids:
+                    user_upi_parts.add(upi.lower().strip())
+
         matched = 0
         for transaction_id in transaction_ids:
             tx = db.get(Transaction, transaction_id)
-            if tx is None or tx.is_self_transfer or tx.is_duplicate or tx.amount <= 0:
+            if tx is None or tx.is_duplicate or tx.amount <= 0:
                 continue
-            source_account = db.get(Account, tx.account_id) if tx.account_id else None
-            if not self._ownership_confirmed(source_account):
-                continue
+
+            desc_lower = (tx.description or "").lower()
+            counterparty_lower = (tx.counterparty or "").lower()
+
+            # 1. Taxpayer Name Match
+            name_match = False
+            if user_name_parts:
+                matched_parts = sum(1 for part in user_name_parts if part in desc_lower or part in counterparty_lower)
+                if len(user_name_parts) >= 2 and matched_parts >= 2:
+                    name_match = True
+                elif len(user_name_parts) == 1 and matched_parts == 1:
+                    name_match = True
+
+            # 2. Taxpayer UPI Match
+            upi_match = False
+            if user_upi_parts:
+                upi_match = any(upi in desc_lower or upi in counterparty_lower for upi in user_upi_parts)
+
+            # 3. Explicit Self Transfer Keywords
+            self_keywords = (
+                "self transfer", "own account", "internal transfer", "trf to self",
+                "trf from self", "transfer to own", "to self", "by self", "self cr",
+                "self dr", "self deposit", "to own a/c", "from own a/c"
+            )
+            keyword_match = any(kw in desc_lower or kw in counterparty_lower for kw in self_keywords)
+
+            # 4. Cross-account transfer candidate matching
             opposite = TransactionDirection.debit if tx.direction == TransactionDirection.credit else TransactionDirection.credit
             candidates = db.scalars(
-                select(Transaction).join(Account, Transaction.account_id == Account.id).where(
+                select(Transaction).where(
                     and_(
                         Transaction.id != tx.id,
                         Transaction.direction == opposite,
@@ -36,33 +73,40 @@ class SelfTransferDetector:
                             tx.transaction_date - timedelta(days=self.day_window),
                             tx.transaction_date + timedelta(days=self.day_window),
                         ),
-                        Account.is_owned.is_(True),
                         Transaction.is_duplicate.is_(False),
                     )
                 ).limit(40)
             ).all()
             best: tuple[float, Transaction] | None = None
             for candidate in candidates:
-                if candidate.account_id == tx.account_id:
-                    continue
-                candidate_account = db.get(Account, candidate.account_id) if candidate.account_id else None
-                if not self._ownership_confirmed(candidate_account):
+                if candidate.account_id and tx.account_id and candidate.account_id == tx.account_id:
                     continue
                 score = self.score(tx, candidate)
-                if score >= 82 and (best is None or score > best[0]):
+                if score >= 75 and (best is None or score > best[0]):
                     best = (score, candidate)
+
             if best:
                 score, candidate = best
                 for item, other in ((tx, candidate), (candidate, tx)):
                     item.is_self_transfer = True
                     item.linked_transaction_id = other.id
-                    item.category = "Transfer"
+                    item.category = "Self Transfer"
                     item.taxable = False
                     item.exempt = False
                     item.ignored = True
-                    item.needs_review = score < 92
+                    item.needs_review = False
                     item.confidence = max(float(item.confidence or 0), score)
                 matched += 1
+            elif name_match or upi_match or keyword_match:
+                tx.is_self_transfer = True
+                tx.category = "Self Transfer"
+                tx.taxable = False
+                tx.exempt = False
+                tx.ignored = True
+                tx.needs_review = False
+                tx.confidence = 98.0
+                matched += 1
+
         db.commit()
         return matched
 

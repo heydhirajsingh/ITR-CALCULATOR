@@ -72,6 +72,30 @@ def test_self_transfer_detector_links_opposite_sides():
     assert debit.ignored and credit.ignored
 
 
+def test_self_transfer_detector_matches_user_name():
+    db = session_with_schema()
+    account1, _, doc1, _, year = seed(db)
+    tx = Transaction(
+        document_id=doc1.id,
+        account_id=account1.id,
+        tax_year_id=year.id,
+        transaction_date=date(2025, 4, 10),
+        description="UPI/TEST USER/TRANSFER TO OWN",
+        debit=Decimal("15000"),
+        credit=0,
+        amount=Decimal("15000"),
+        direction=TransactionDirection.debit,
+    )
+    db.add(tx)
+    db.commit()
+    SelfTransferDetector().process(db, [tx.id])
+    db.refresh(tx)
+    assert tx.is_self_transfer is True
+    assert tx.category == "Self Transfer"
+    assert tx.ignored is True
+    assert tx.needs_review is False
+
+
 def test_duplicate_detector_does_not_merge_repeated_same_document_payments():
     db = session_with_schema()
     account1, _, doc1, _, year = seed(db)
