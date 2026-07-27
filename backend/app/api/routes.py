@@ -554,6 +554,7 @@ def review_groups(financial_year: str = "FY 2025-26", db: Session = Depends(get_
                 "count": 0,
                 "total_amount": 0.0,
                 "review_ids": [],
+                "transactions": [],
                 "category": transaction.category,
                 "sample_description": transaction.description,
                 "counterparty": transaction.counterparty or classifier.extract_counterparty(transaction.description, direction=direction),
@@ -564,6 +565,16 @@ def review_groups(financial_year: str = "FY 2025-26", db: Session = Depends(get_
         group["total_amount"] += float(transaction.amount)
         group["review_ids"].append(review.id)
         group["confidence_total"] += float(review.confidence)
+        group["transactions"].append({
+            "review_id": review.id,
+            "confidence": float(review.confidence),
+            "reason": review.reason,
+            "transaction": _transaction_dict(
+                transaction,
+                transaction.document.filename if transaction.document else None,
+                transaction.document.document_type if transaction.document else None,
+            ),
+        })
     items = []
     for group in grouped.values():
         group["confidence"] = group.pop("confidence_total") / group["count"]
