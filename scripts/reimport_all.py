@@ -90,7 +90,8 @@ def reimport_all():
                 direction='debit' if t.debit > Decimal('0') else 'credit',
                 balance=t.balance,
                 bank_name=doc.bank_name,
-                source_row=t.source_row
+                source_row=t.source_row,
+                raw_data=dict(t.raw_data) if t.raw_data else {},
             )
             db.add(new_tx)
 

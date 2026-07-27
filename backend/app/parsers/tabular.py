@@ -63,6 +63,7 @@ def dataframe_to_transactions(
     *,
     bank_name: str | None = None,
     account_number: str | None = None,
+    page_number: int | None = None,
 ) -> list[ParsedTransaction]:
     if frame.empty:
         return []
@@ -119,6 +120,10 @@ def dataframe_to_transactions(
             continue
 
         raw = {str(key): _safe_value(value) for key, value in row.to_dict().items()}
+        # Inject source location so the UI can display page + line
+        if page_number is not None:
+            raw["page"] = page_number
+            raw["line"] = row_number
         reference = str(row.get(reference_col, "")).strip() if reference_col else None
         utr = str(row.get(utr_col, "")).strip() if utr_col else _extract_utr(description)
         mode = str(row.get(mode_col, "")).strip() if mode_col else _infer_mode(description)

@@ -218,7 +218,12 @@ class PdfParser(DocumentParser):
                 for table in page.extract_tables() or []:
                     frame = rows_to_dataframe(table)
                     transactions.extend(
-                        dataframe_to_transactions(frame, bank_name=bank_name, account_number=account_number)
+                        dataframe_to_transactions(
+                            frame,
+                            bank_name=bank_name,
+                            account_number=account_number,
+                            page_number=page.page_number,
+                        )
                     )
         return transactions
 
