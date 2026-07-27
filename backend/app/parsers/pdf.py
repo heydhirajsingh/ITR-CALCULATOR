@@ -149,6 +149,7 @@ class PdfParser(DocumentParser):
                                             bank_name=bank_name or "Federal Bank",
                                             account_number=account_number,
                                             source_row=len(txs),
+                                            raw_data={"page": page.page_number, "line": len(txs) + 1},
                                         )
                                     )
                 if txs:
@@ -201,6 +202,7 @@ class PdfParser(DocumentParser):
                                     bank_name=bank_name or "HDFC Bank",
                                     account_number=account_number,
                                     source_row=i,
+                                    raw_data={"page": page.page_number, "line": i + 1},
                                 )
                             )
         except Exception:
