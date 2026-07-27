@@ -10,7 +10,7 @@ echo.
 if not exist "frontend\node_modules\.bin\tsc.cmd" (
     echo [setup] Installing frontend dependencies...
     cd frontend
-    call npm install --no-audit --no-fund --legacy-peer-deps
+    call npm install --no-package-lock --no-audit --no-fund --legacy-peer-deps
     cd ..
 )
 

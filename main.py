@@ -77,7 +77,7 @@ def build_frontend(force: bool = False) -> None:
     tsc_bin = node_modules / ".bin" / ("tsc.cmd" if os.name == "nt" else "tsc")
     if not node_modules.exists() or not tsc_bin.exists():
         print("[setup] Installing frontend dependencies locally...")
-        subprocess.run([npm, "install", "--no-audit", "--no-fund", "--legacy-peer-deps"], cwd=FRONTEND_DIR, check=True)
+        subprocess.run([npm, "install", "--no-package-lock", "--no-audit", "--no-fund", "--legacy-peer-deps"], cwd=FRONTEND_DIR, check=True)
     index = FRONTEND_DIR / "dist" / "index.html"
     needs_build = force or not index.exists() or latest_source_mtime(FRONTEND_DIR / "src") > index.stat().st_mtime
     if needs_build:
