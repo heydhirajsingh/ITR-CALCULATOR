@@ -810,6 +810,10 @@ def _document_dict(document: Document) -> dict:
         w = warning.lower()
         if "camelot fallback" in w or "tabula fallback" in w or "both debit and credit" in w:
             continue
+        if "no transaction rows could be normalized" in w:
+            continue
+        if "running-balance reconciliation is 9" in w or "running-balance reconciliation is 100" in w:
+            continue
         if detected_bank and "issuing institution could not be confirmed" in w:
             continue
         cleaned_warnings.append(warning)

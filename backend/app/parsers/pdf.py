@@ -78,14 +78,21 @@ class PdfParser(DocumentParser):
             transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
         except Exception:
             pass
+        transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
+
         if not transactions:
             transactions.extend(self._extract_camelot(path, password, bank_name, account_number))
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
         if not transactions:
             transactions.extend(self._extract_tabula(path, password, bank_name, account_number))
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
         if not transactions:
             transactions.extend(_parse_text_lines(full_text, bank_name, account_number))
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
         if not transactions:
             transactions.extend(_parse_multiline_blocks(full_text, bank_name, account_number))
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
+
         if not transactions:
             warnings.append("No transaction rows could be normalized automatically; extracted text is retained for review.")
         else:
