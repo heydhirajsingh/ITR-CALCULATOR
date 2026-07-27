@@ -75,10 +75,17 @@ class PdfParser(DocumentParser):
 
         transactions: list[ParsedTransaction] = []
         try:
-            transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
+            transactions.extend(self._extract_by_coordinates(path, password, bank_name, account_number))
         except Exception:
             pass
         transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
+
+        if not transactions:
+            try:
+                transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
+            except Exception:
+                pass
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
 
         if not transactions:
             transactions.extend(self._extract_camelot(path, password, bank_name, account_number))
@@ -108,6 +115,95 @@ class PdfParser(DocumentParser):
             account_number=account_number,
             page_count=page_count,
         )
+
+    def _extract_by_coordinates(
+        self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
+    ) -> list[ParsedTransaction]:
+        txs: list[ParsedTransaction] = []
+        date_pat = re.compile(r"^\d{2}/\d{2}/\d{2}$")
+        bal_pat = re.compile(r"^[\d,]+\.\d{2}$")
+        try:
+            with pdfplumber.open(path, password=password) as pdf:
+                for page in pdf.pages:
+                    # 1. First check extract_tables() for Federal, Equitas, IDFC, DCB
+                    for t in page.extract_tables() or []:
+                        # Federal Bank 9+ column structure
+                        for row in t:
+                            if not row:
+                                continue
+                            if len(row) >= 9 and parse_date(row[0]):
+                                d_val = parse_date(row[0])
+                                narr = row[2].replace("\n", " ").strip() if len(row) > 2 and row[2] else ""
+                                dr = parse_amount(row[6]) if len(row) > 6 and row[6] and parse_amount(row[6]) else Decimal("0")
+                                cr = parse_amount(row[7]) if len(row) > 7 and row[7] and parse_amount(row[7]) else Decimal("0")
+                                bal = parse_amount(row[8]) if len(row) > 8 and row[8] and parse_amount(row[8]) else None
+                                if dr > 0 or cr > 0:
+                                    txs.append(
+                                        ParsedTransaction(
+                                            transaction_date=d_val,
+                                            value_date=d_val,
+                                            description=narr,
+                                            narration=narr,
+                                            debit=dr,
+                                            credit=cr,
+                                            balance=bal,
+                                            bank_name=bank_name or "Federal Bank",
+                                            account_number=account_number,
+                                            source_row=len(txs),
+                                        )
+                                    )
+
+                    # 2. HDFC Bank Coordinate Box Extraction
+                    words = page.extract_words()
+                    lines_by_top: dict[float, list[dict]] = {}
+                    for w in words:
+                        top_key = round(w["top"], 0)
+                        lines_by_top.setdefault(top_key, []).append(w)
+
+                    sorted_tops = sorted(lines_by_top.keys())
+                    row_starts = []
+                    for top in sorted_tops:
+                        lwords = sorted(lines_by_top[top], key=lambda x: x["x0"])
+                        has_date = any(date_pat.match(w["text"]) and w["x0"] < 80 for w in lwords)
+                        has_bal = any(bal_pat.match(w["text"]) and w["x0"] > 550 for w in lwords)
+                        if has_date and has_bal:
+                            row_starts.append(top)
+
+                    for i, start_top in enumerate(row_starts):
+                        end_top = row_starts[i + 1] if i + 1 < len(row_starts) else 9999.0
+                        row_words = []
+                        for top in sorted_tops:
+                            if start_top <= top < end_top:
+                                row_words.extend(lines_by_top[top])
+
+                        num_words = [w for w in row_words if bal_pat.match(w["text"]) and w["x0"] > 300]
+                        d_words = [w for w in row_words if date_pat.match(w["text"]) and w["x0"] < 80]
+                        if d_words and len(num_words) >= 2:
+                            t_date = parse_date(d_words[0]["text"])
+                            balance = parse_amount(num_words[-1]["text"])
+                            txn_amount = parse_amount(num_words[-2]["text"])
+                            is_debit = bool(num_words[-2]["x0"] < 480.0)
+                            debit = txn_amount if is_debit else Decimal("0")
+                            credit = Decimal("0") if is_debit else txn_amount
+                            desc_words = [w for w in row_words if 70 <= w["x0"] <= 340]
+                            desc = " ".join(w["text"] for w in desc_words).strip()
+                            txs.append(
+                                ParsedTransaction(
+                                    transaction_date=t_date,
+                                    value_date=t_date,
+                                    description=desc,
+                                    narration=desc,
+                                    debit=debit,
+                                    credit=credit,
+                                    balance=balance,
+                                    bank_name=bank_name or "HDFC Bank",
+                                    account_number=account_number,
+                                    source_row=i,
+                                )
+                            )
+        except Exception:
+            pass
+        return txs
 
     def _extract_pdfplumber_tables(
         self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
