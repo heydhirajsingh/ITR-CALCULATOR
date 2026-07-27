@@ -90,7 +90,9 @@ export function ReviewQueuePage() {
                     <p className="mt-0.5 text-xs text-muted-foreground truncate" title={group.sample_description}>
                       Narration: {group.sample_description}
                     </p>
-                    <p className="mt-0.5 text-[11px] font-mono text-muted-foreground/80">Pattern: {group.pattern}</p>
+                    <p className="mt-0.5 text-[11px] font-mono text-muted-foreground/80">
+                      Pattern: {group.pattern.replace(/^[-/\s]+/, "").replace(/[-/\s]+$/, "").replace(/[-/]/g, " ").replace(/\s+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase()) || "Standard Pattern"}
+                    </p>
                   </div>
                   <p className="text-xl font-bold">{money(group.total_amount)}</p>
                   <select
