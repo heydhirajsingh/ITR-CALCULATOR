@@ -44,6 +44,20 @@ def find_column(columns: Iterable[Any], logical_name: str) -> Any | None:
     return None
 
 
+def rows_to_dataframe(rows: list[list[Any]]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    header_idx = 0
+    for idx, row in enumerate(rows[:10]):
+        non_empty = [str(cell).strip() for cell in row if str(cell or "").strip()]
+        if len(non_empty) >= 2:
+            header_idx = idx
+            break
+    header = [str(cell).strip() for cell in rows[header_idx]]
+    data = rows[header_idx + 1:]
+    return pd.DataFrame(data, columns=header)
+
+
 def dataframe_to_transactions(
     frame: pd.DataFrame,
     *,
@@ -80,7 +94,6 @@ def dataframe_to_transactions(
         credit = parse_amount(row.get(credit_col)) if credit_col else Decimal("0")
         if debit == 0 and credit == 0 and amount_col:
             amount = parse_amount(row.get(amount_col))
-            description_lower = description.lower()
             marker = " ".join(str(value) for value in row.tolist()).lower()
             if amount < 0 or any(token in marker for token in (" debit", " dr", "withdrawal")):
                 debit = abs(amount)
@@ -89,6 +102,19 @@ def dataframe_to_transactions(
             else:
                 credit = max(amount, Decimal("0"))
                 debit = abs(min(amount, Decimal("0")))
+
+        # Disambiguate rows where both debit and credit are positive due to column misalignment
+        if debit > 0 and credit > 0:
+            marker = " ".join(str(value) for value in row.tolist()).lower()
+            if any(token in marker for token in (" cr", "credit", "deposit", "by ")):
+                debit = Decimal("0")
+            elif any(token in marker for token in (" dr", "debit", "withdrawal", "to ")):
+                credit = Decimal("0")
+            elif credit > debit:
+                debit = Decimal("0")
+            else:
+                credit = Decimal("0")
+
         if debit == 0 and credit == 0:
             continue
 
@@ -120,58 +146,35 @@ def dataframe_to_transactions(
     return results
 
 
-def rows_to_dataframe(rows: list[list[Any]]) -> pd.DataFrame:
-    cleaned = [["" if cell is None else str(cell).strip() for cell in row] for row in rows if row]
-    if len(cleaned) < 2:
-        return pd.DataFrame()
-    header_index = _find_header_row(cleaned)
-    header = cleaned[header_index]
-    width = len(header)
-    data = [row[:width] + [""] * max(0, width - len(row)) for row in cleaned[header_index + 1 :]]
-    return pd.DataFrame(data, columns=_dedupe_headers(header))
-
-
-def _find_header_row(rows: list[list[str]]) -> int:
-    best_index = 0
-    best_score = -1
-    keywords = {alias for aliases in COLUMN_ALIASES.values() for alias in aliases}
-    for index, row in enumerate(rows[:15]):
-        labels = [normalize_header(cell) for cell in row]
-        score = sum(1 for label in labels if any(keyword in label for keyword in keywords))
-        if score > best_score:
-            best_score, best_index = score, index
-    return best_index
-
-
-def _dedupe_headers(headers: list[str]) -> list[str]:
-    seen: dict[str, int] = {}
-    result: list[str] = []
-    for index, header in enumerate(headers):
-        base = header or f"column_{index + 1}"
-        seen[base] = seen.get(base, 0) + 1
-        result.append(base if seen[base] == 1 else f"{base}_{seen[base]}")
-    return result
-
-
-def _extract_utr(text: str) -> str | None:
-    match = re.search(r"\b(?:UTR[:\s-]*)?([A-Z0-9]{12,30})\b", text.upper())
-    return match.group(1) if match and any(char.isdigit() for char in match.group(1)) else None
-
-
-def _infer_mode(text: str) -> str | None:
-    upper = text.upper()
-    for mode in ("UPI", "NEFT", "RTGS", "IMPS", "ACH", "NACH", "CHEQUE", "CASH", "POS", "ATM"):
-        if mode in upper:
-            return mode
-    return None
-
-
 def _safe_value(value: Any) -> Any:
     if pd.isna(value):
         return None
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except Exception:
-            pass
-    return str(value) if not isinstance(value, (int, float, bool)) else value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (int, float, str, bool)):
+        return value
+    return str(value)
+
+
+def _extract_utr(description: str) -> str | None:
+    match = re.search(r"\b([A-Z0-9]{12,22})\b", description)
+    return match.group(1) if match else None
+
+
+def _infer_mode(description: str) -> str:
+    text = description.lower()
+    if "upi" in text or "gpay" in text or "phonepe" in text or "paytm" in text:
+        return "UPI"
+    if "neft" in text:
+        return "NEFT"
+    if "rtgs" in text:
+        return "RTGS"
+    if "imps" in text:
+        return "IMPS"
+    if "chq" in text or "cheque" in text:
+        return "Cheque"
+    if "cash" in text or "atm" in text:
+        return "Cash"
+    if "pos" in text or "card" in text:
+        return "Card"
+    return "Transfer"

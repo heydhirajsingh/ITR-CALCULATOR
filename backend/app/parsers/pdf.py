@@ -66,7 +66,6 @@ class PdfParser(DocumentParser):
         full_text = "\n".join(text_parts)
         document_type = detect_document_type(path.name, full_text)
         bank_name = detect_bank(path.name, full_text)
-        # Account identifiers must come from statement headers, never beneficiary rows.
         account_number = _extract_account_number(full_text[:5000])
         if document_type in {"Bank Statement", "Credit Card Statement"} and not bank_name:
             warnings.append("Issuing institution could not be confirmed from filename/header evidence; user confirmation is required.")
@@ -76,12 +75,12 @@ class PdfParser(DocumentParser):
         transactions: list[ParsedTransaction] = []
         try:
             transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
-        except Exception as exc:
-            warnings.append(f"pdfplumber table extraction warning: {exc}")
+        except Exception:
+            pass
         if not transactions:
-            transactions.extend(self._extract_camelot(path, bank_name, account_number, warnings))
+            transactions.extend(self._extract_camelot(path, password, bank_name, account_number))
         if not transactions:
-            transactions.extend(self._extract_tabula(path, bank_name, account_number, warnings))
+            transactions.extend(self._extract_tabula(path, password, bank_name, account_number))
         if not transactions:
             transactions.extend(_parse_text_lines(full_text, bank_name, account_number))
         if not transactions:
@@ -114,12 +113,15 @@ class PdfParser(DocumentParser):
         return transactions
 
     def _extract_camelot(
-        self, path: Path, bank_name: str | None, account_number: str | None, warnings: list[str]
+        self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
     ) -> list[ParsedTransaction]:
         try:
             import camelot
 
-            tables = camelot.read_pdf(str(path), pages="all", flavor="stream")
+            kwargs = {"pages": "all", "flavor": "stream"}
+            if password:
+                kwargs["password"] = password
+            tables = camelot.read_pdf(str(path), **kwargs)
             transactions: list[ParsedTransaction] = []
             for table in tables:
                 raw = table.df
@@ -130,25 +132,26 @@ class PdfParser(DocumentParser):
                     dataframe_to_transactions(frame, bank_name=bank_name, account_number=account_number)
                 )
             return transactions
-        except Exception as exc:
-            warnings.append(f"Camelot fallback unavailable or failed: {exc}")
+        except Exception:
             return []
 
     def _extract_tabula(
-        self, path: Path, bank_name: str | None, account_number: str | None, warnings: list[str]
+        self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
     ) -> list[ParsedTransaction]:
         try:
             import tabula
 
-            frames: list[pd.DataFrame] = tabula.read_pdf(str(path), pages="all", multiple_tables=True)
+            kwargs = {"pages": "all", "multiple_tables": True}
+            if password:
+                kwargs["password"] = password
+            frames: list[pd.DataFrame] = tabula.read_pdf(str(path), **kwargs)
             transactions: list[ParsedTransaction] = []
             for frame in frames:
                 transactions.extend(
                     dataframe_to_transactions(frame, bank_name=bank_name, account_number=account_number)
                 )
             return transactions
-        except Exception as exc:
-            warnings.append(f"Tabula fallback unavailable or failed: {exc}")
+        except Exception:
             return []
 
 
@@ -164,57 +167,45 @@ def _extract_account_number(text: str) -> str | None:
     return None
 
 
-def _parse_text_lines(
-    text: str, bank_name: str | None, account_number: str | None
-) -> list[ParsedTransaction]:
-    results: list[ParsedTransaction] = []
-    date_pattern = re.compile(r"^\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}[- ][A-Za-z]{3}[- ]\d{2,4})\s+")
-    amount_pattern = re.compile(r"(?:\(?-?\d[\d,]*\.\d{2}\)?)(?:\s*(?:Cr|Dr))?", re.IGNORECASE)
-    for row_number, raw_line in enumerate(text.splitlines(), start=1):
-        line = " ".join(raw_line.split())
-        date_match = date_pattern.match(line)
-        if not date_match:
-            continue
-        day = parse_date(date_match.group(1))
-        if not day:
-            continue
-        amounts = list(amount_pattern.finditer(line))
-        if not amounts:
-            continue
-        parsed = [parse_amount(match.group(0)) for match in amounts]
-        description_end = amounts[0].start()
-        description = line[date_match.end() : description_end].strip(" -|")
-        debit = parse_amount(0)
-        credit = parse_amount(0)
-        balance = None
-        if len(parsed) >= 3:
-            debit, credit, balance = abs(parsed[-3]), abs(parsed[-2]), parsed[-1]
-        elif len(parsed) == 2:
-            marker = line[amounts[0].end() : amounts[1].start()].lower()
-            if "dr" in marker or any(token in description.lower() for token in ("withdraw", "debit", "purchase", "payment")):
-                debit, balance = abs(parsed[0]), parsed[1]
-            else:
-                credit, balance = abs(parsed[0]), parsed[1]
-        else:
-            marker = line.lower()
-            if " dr" in marker or any(token in description.lower() for token in ("withdraw", "debit", "purchase", "payment")):
-                debit = abs(parsed[0])
-            else:
-                credit = abs(parsed[0])
-        if debit == 0 and credit == 0:
-            continue
-        results.append(
-            ParsedTransaction(
-                transaction_date=day,
-                description=description or line,
-                narration=line,
-                debit=debit,
-                credit=credit,
-                balance=balance,
-                bank_name=bank_name,
-                account_number=account_number,
-                raw_data={"line": line},
-                source_row=row_number,
-            )
-        )
-    return results
+def _parse_text_lines(text: str, bank_name: str | None, account_number: str | None) -> list[ParsedTransaction]:
+    transactions: list[ParsedTransaction] = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines, start=1):
+        parsed = _try_parse_line(line, bank_name=bank_name, account_number=account_number, source_row=index)
+        if parsed:
+            transactions.append(parsed)
+    return transactions
+
+
+def _try_parse_line(
+    line: str, *, bank_name: str | None, account_number: str | None, source_row: int
+) -> ParsedTransaction | None:
+    match = re.search(
+        r"^(?P<date>\d{1,2}[-/\.][A-Za-z0-9]{2,3}[-/\.]\d{2,4})\s+(?P<desc>.+?)\s+(?P<amount>-?[\d,]+\.\d{2})(?:\s+(?P<bal>[\d,]+\.\d{2}))?$",
+        line,
+    )
+    if not match:
+        return None
+    date_val = parse_date(match.group("date"))
+    if not date_val:
+        return None
+    raw_amount = parse_amount(match.group("amount"))
+    description = match.group("desc").strip()
+    debit = Decimal("0")
+    credit = Decimal("0")
+    if raw_amount < 0 or any(token in description.lower() for token in ("dr", "debit", "withdrawal")):
+        debit = abs(raw_amount)
+    else:
+        credit = abs(raw_amount)
+    return ParsedTransaction(
+        transaction_date=date_val,
+        value_date=None,
+        description=description,
+        narration=description,
+        debit=debit,
+        credit=credit,
+        balance=parse_amount(match.group("bal")) if match.group("bal") else None,
+        bank_name=bank_name,
+        account_number=account_number,
+        source_row=source_row,
+    )

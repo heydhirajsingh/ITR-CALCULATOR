@@ -29,6 +29,9 @@ BANKS = (
     "HDFC Bank", "State Bank of India", "ICICI Bank", "Axis Bank", "Kotak Mahindra Bank",
     "Punjab National Bank", "Bank of Baroda", "Canara Bank", "Union Bank of India", "IDFC First Bank",
     "IndusInd Bank", "Yes Bank", "Federal Bank", "RBL Bank", "AU Small Finance Bank",
+    "DCB Bank", "Equitas Bank", "Central Bank of India", "Indian Bank", "Bank of India",
+    "Bandhan Bank", "UCO Bank", "South Indian Bank", "Karur Vysya Bank", "City Union Bank",
+    "Karnataka Bank", "Standard Chartered", "HSBC", "Citi Bank",
 )
 
 
@@ -36,11 +39,9 @@ def detect_document_type(filename: str, text: str = "") -> str:
     filename_text = Path(filename).stem.lower()
     header = text[:6000].lower()
     haystack = f"{filename_text} {header}"
-    # Statement headers and filenames are issuer-authored evidence. Generic debit/credit
-    # words in the body must not turn a bank statement into a business ledger.
-    if any(token in filename_text for token in ("bankstatement", "bank_statement", "accountstatement", "account_statement")):
+    if any(token in filename_text for token in ("bankstatement", "bank_statement", "accountstatement", "account_statement", "acct statement")):
         return "Bank Statement"
-    if any(token in header[:2000] for token in ("your account statement", "bank account statement", "statement period")):
+    if any(token in header[:2000] for token in ("your account statement", "bank account statement", "statement period", "account summary")):
         return "Bank Statement"
     best_type = "Unknown"
     best_score = 0
@@ -54,7 +55,7 @@ def detect_document_type(filename: str, text: str = "") -> str:
 
 def _filename_fallback(filename: str) -> str:
     name = Path(filename).stem.lower()
-    if any(token in name for token in ("statement", "passbook", "account")):
+    if any(token in name for token in ("statement", "passbook", "account", "acct")):
         return "Bank Statement"
     if any(token in name for token in ("ledger", "contract", "broker")):
         return "Broker Ledger"
@@ -64,9 +65,7 @@ def _filename_fallback(filename: str) -> str:
 def detect_bank(filename: str, text: str = "") -> str | None:
     filename_text = filename.lower()
     compact_filename = re.sub(r"[^a-z0-9]", "", filename_text)
-    # Limit content evidence to the issuer header. Bank names in transaction narrations
-    # identify counterparties, not the institution that issued the statement.
-    header = text[:600].lower()
+    header = text[:800].lower()
     aliases = {
         "HDFC Bank": ("hdfc",),
         "State Bank of India": ("state bank of india", "sbi"),
@@ -76,6 +75,27 @@ def detect_bank(filename: str, text: str = "") -> str | None:
         "IDFC First Bank": ("idfc first", "idfc"),
         "Punjab National Bank": ("punjab national bank", "pnb"),
         "Bank of Baroda": ("bank of baroda", "bob"),
+        "DCB Bank": ("dcb bank", "dcb"),
+        "Federal Bank": ("federal bank", "federal", "fedmobile"),
+        "Equitas Bank": ("equitas bank", "equitas", "equitas small finance bank"),
+        "AU Small Finance Bank": ("au bank", "au small finance", "au small finance bank", "aubank"),
+        "Canara Bank": ("canara bank", "canara"),
+        "Union Bank of India": ("union bank of india", "union bank", "ubi"),
+        "IndusInd Bank": ("indusind bank", "indusind"),
+        "Yes Bank": ("yes bank", "yesbank"),
+        "RBL Bank": ("rbl bank", "rbl", "ratnakar"),
+        "Central Bank of India": ("central bank", "cbi"),
+        "Indian Bank": ("indian bank",),
+        "Bank of India": ("bank of india", "boi"),
+        "Bandhan Bank": ("bandhan bank", "bandhan"),
+        "UCO Bank": ("uco bank", "uco"),
+        "South Indian Bank": ("south indian bank", "sib"),
+        "Karur Vysya Bank": ("karur vysya", "kvb"),
+        "City Union Bank": ("city union bank", "cub"),
+        "Karnataka Bank": ("karnataka bank",),
+        "Standard Chartered": ("standard chartered", "scb"),
+        "HSBC": ("hsbc",),
+        "Citi Bank": ("citibank", "citi"),
     }
     scored: list[tuple[int, str]] = []
     for bank, names in aliases.items():
