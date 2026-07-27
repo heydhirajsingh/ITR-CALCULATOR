@@ -15,22 +15,31 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import get_settings
 from backend.app.database.session import get_db
 from backend.app.models.entities import (
+    AISEntry,
     Account,
     AuditLog,
     Bank,
     Deduction,
+    Dividend,
     Document,
+    DocumentPage,
     DocumentStatus,
+    Expense,
+    Form26ASEntry,
     ImportSession,
+    Income,
+    Interest,
+    Investment,
     ReviewQueue,
     ReviewStatus,
+    TDS,
     TaxYear,
     Transaction,
     TransactionDirection,
     User,
 )
 from backend.app.parsers.base import InvalidPasswordError
-from backend.app.parsers.detector import BANKS
+from backend.app.parsers.detector import BANKS, detect_bank
 from backend.app.reports.exporter import report_exporter
 from backend.app.schemas.api import (
     AccountUpdate,
