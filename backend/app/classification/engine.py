@@ -144,17 +144,36 @@ class ClassificationEngine:
         debit: Decimal,
         credit: Decimal,
         document_type: str = "Unknown",
+        user=None,
     ) -> ClassificationResult:
         normalized = self.normalize(description)
         direction = "credit" if credit > 0 else "debit"
         candidates: list[tuple[float, Rule, str]] = []
+        
+        # Build dynamic self keywords from user profile
+        dynamic_self_keywords = []
+        if user:
+            if user.name:
+                dynamic_self_keywords.append(user.name.lower())
+                parts = user.name.lower().split()
+                if len(parts) >= 2:
+                    dynamic_self_keywords.append(parts[0])  # First name (e.g. dhiraj)
+            if user.upi_ids:
+                dynamic_self_keywords.extend([u.strip().lower() for u in user.upi_ids.split(",") if u.strip()])
+                
         for rule in RULES:
             if rule.debit_only and direction != "debit":
                 continue
             if rule.credit_only and direction != "credit":
                 continue
-            exact_hits = [keyword for keyword in rule.keywords if keyword in normalized]
-            fuzzy = max((partial_ratio(keyword, normalized) for keyword in rule.keywords), default=0)
+            
+            # Combine static rule keywords with dynamic profile keywords if applicable
+            effective_keywords = list(rule.keywords)
+            if rule.category == "Self Transfer":
+                effective_keywords.extend(dynamic_self_keywords)
+                
+            exact_hits = [keyword for keyword in effective_keywords if keyword in normalized]
+            fuzzy = max((partial_ratio(keyword, normalized) for keyword in effective_keywords), default=0)
             if exact_hits:
                 score = min(99.0, rule.confidence + min(5, len(exact_hits) - 1))
                 candidates.append((score, rule, f"matched {', '.join(exact_hits[:3])}"))

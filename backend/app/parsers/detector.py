@@ -67,7 +67,7 @@ def detect_bank(filename: str, text: str = "") -> str | None:
     compact_filename = re.sub(r"[^a-z0-9]", "", filename_text)
     header = text[:800].lower()
     aliases = {
-        "HDFC Bank": ("hdfc",),
+        "HDFC Bank": ("hdfc", "chq./ref.no."),
         "State Bank of India": ("state bank of india", "sbi"),
         "ICICI Bank": ("icici",),
         "Axis Bank": ("axis bank", "axis"),
@@ -101,7 +101,7 @@ def detect_bank(filename: str, text: str = "") -> str | None:
     for bank, names in aliases.items():
         score = 0
         for alias in names:
-            pattern = rf"\b{re.escape(alias)}\b"
+            pattern = rf"(?<!@)\b{re.escape(alias)}\b"
             compact_alias = re.sub(r"[^a-z0-9]", "", alias)
             if compact_alias in compact_filename:
                 score += 100

@@ -122,12 +122,6 @@ class PdfParser(DocumentParser):
         txs: list[ParsedTransaction] = []
         date_pat = re.compile(r"^\d{2}/\d{2}/\d{2}$")
         bal_pat = re.compile(r"^[\d,]+\.\d{2}$")
-    def _extract_by_coordinates(
-        self, path: Path, password: str | None, bank_name: str | None, account_number: str | None
-    ) -> list[ParsedTransaction]:
-        txs: list[ParsedTransaction] = []
-        date_pat = re.compile(r"^\d{2}/\d{2}/\d{2}$")
-        bal_pat = re.compile(r"^[\d,]+\.\d{2}$")
         try:
             with pdfplumber.open(path, password=password) as pdf:
                 # 1. Check for Federal Bank 9+ column structure first

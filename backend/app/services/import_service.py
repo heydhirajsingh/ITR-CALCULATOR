@@ -400,6 +400,7 @@ class ImportManager:
                 debit=parsed.debit,
                 credit=parsed.credit,
                 document_type=document.document_type,
+                user=user,
             )
             direction_value = "credit" if parsed.credit > 0 else "debit"
             learned = classification_rule_service.match(db, description, direction_value)
