@@ -162,8 +162,6 @@ class ImportManager:
 
     def delete_document(self, db: Session, document: Document) -> None:
         """Remove one document and all records derived from it."""
-        if document.status in {DocumentStatus.queued, DocumentStatus.processing}:
-            raise ValueError("Wait for this document to finish processing before removing it")
 
         document_id = document.id
         filename = document.filename

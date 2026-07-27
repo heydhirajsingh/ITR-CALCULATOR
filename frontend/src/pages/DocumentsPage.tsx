@@ -101,6 +101,14 @@ export function DocumentsPage() {
       queryClient.invalidateQueries({ queryKey: ["review"] });
     },
   });
+  const clearAllData = useMutation({
+    mutationFn: () => api<{ status: string }>("/api/documents/clear-all", { method: "POST" }),
+    onSuccess: () => {
+      setSelectedDocuments(new Set());
+      setSessionId(null);
+      queryClient.invalidateQueries();
+    },
+  });
   const mergeDocuments = useMutation({
     mutationFn: () => api<{ status: string; transactions: number }>("/api/documents/merge-account", {
       method: "POST",
@@ -235,9 +243,27 @@ export function DocumentsPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Import register</CardTitle>
-          <CardDescription>{documents.data?.total ?? 0} local documents with parser status and warnings.</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Import register</CardTitle>
+            <CardDescription>{documents.data?.total ?? 0} local documents with parser status and warnings.</CardDescription>
+          </div>
+          {Boolean(liveDocuments.length) && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={clearAllData.isPending}
+              onClick={() => {
+                if (window.confirm("Are you sure you want to remove ALL imported documents, statements, and transaction data?")) {
+                  clearAllData.mutate();
+                }
+              }}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              {clearAllData.isPending ? "Clearing..." : "Clear all data"}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {selectedDocuments.size > 0 && (

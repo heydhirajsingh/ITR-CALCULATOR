@@ -329,6 +329,29 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
     return {"status": "removed", "id": document_id}
 
 
+@router.post("/documents/clear-all")
+@router.delete("/documents/clear-all")
+def clear_all_documents(db: Session = Depends(get_db)) -> dict:
+    db.query(ReviewQueue).delete(synchronize_session=False)
+    db.query(AISEntry).delete(synchronize_session=False)
+    db.query(Form26ASEntry).delete(synchronize_session=False)
+    db.query(TDS).delete(synchronize_session=False)
+    db.query(Income).delete(synchronize_session=False)
+    db.query(Expense).delete(synchronize_session=False)
+    db.query(Investment).delete(synchronize_session=False)
+    db.query(Interest).delete(synchronize_session=False)
+    db.query(Dividend).delete(synchronize_session=False)
+    db.query(Deduction).delete(synchronize_session=False)
+    db.query(Transaction).delete(synchronize_session=False)
+    db.query(DocumentPage).delete(synchronize_session=False)
+    db.query(Document).delete(synchronize_session=False)
+    db.query(ImportSession).delete(synchronize_session=False)
+    db.query(Account).delete(synchronize_session=False)
+    db.query(Bank).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "cleared", "message": "All imported data cleared successfully"}
+
+
 @router.post("/documents/{document_id}/password")
 def document_password(document_id: int, request: PasswordRequest) -> dict:
     try:
