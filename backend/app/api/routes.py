@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.app.classification.engine import classifier
 from backend.app.core.config import get_settings
 from backend.app.database.session import get_db
 from backend.app.models.entities import (
