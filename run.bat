@@ -7,10 +7,10 @@ echo             Starting Local ITR Calculator
 echo ===================================================
 echo.
 
-if not exist "frontend\node_modules" (
+if not exist "frontend\node_modules\.bin\tsc.cmd" (
     echo [setup] Installing frontend dependencies...
     cd frontend
-    call npm install
+    call npm install --no-audit --no-fund --legacy-peer-deps
     cd ..
 )
 
