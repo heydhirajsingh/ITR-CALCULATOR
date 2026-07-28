@@ -81,17 +81,16 @@ class PdfParser(DocumentParser):
         transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
 
         if not transactions:
-            try:
-                transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
-            except Exception:
-                pass
-            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
-
-        if not transactions:
             transactions.extend(self._extract_camelot(path, password, bank_name, account_number))
             transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
         if not transactions:
             transactions.extend(self._extract_tabula(path, password, bank_name, account_number))
+            transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
+        if not transactions:
+            try:
+                transactions.extend(self._extract_pdfplumber_tables(path, password, bank_name, account_number))
+            except Exception:
+                pass
             transactions = [t for t in transactions if t.debit > 0 or t.credit > 0]
         if not transactions:
             transactions.extend(_parse_text_lines(full_text, bank_name, account_number))
@@ -130,8 +129,10 @@ class PdfParser(DocumentParser):
                         for row in t:
                             if not row:
                                 continue
-                            if len(row) >= 9 and parse_date(row[0]):
+                            if len(row) >= 9:
                                 d_val = parse_date(row[0])
+                                if not d_val:
+                                    continue
                                 narr = row[2].replace("\n", " ").strip() if len(row) > 2 and row[2] else ""
                                 dr = parse_amount(row[6]) if len(row) > 6 and row[6] and parse_amount(row[6]) else Decimal("0")
                                 cr = parse_amount(row[7]) if len(row) > 7 and row[7] and parse_amount(row[7]) else Decimal("0")
@@ -183,6 +184,8 @@ class PdfParser(DocumentParser):
                         d_words = [w for w in row_words if date_pat.match(w["text"]) and w["x0"] < 80]
                         if d_words and len(num_words) >= 2:
                             t_date = parse_date(d_words[0]["text"])
+                            if not t_date:
+                                continue
                             balance = parse_amount(num_words[-1]["text"])
                             txn_amount = parse_amount(num_words[-2]["text"])
                             is_debit = bool(num_words[-2]["x0"] < 480.0)

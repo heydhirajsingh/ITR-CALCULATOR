@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 

@@ -22,7 +22,7 @@ class TextDocxParser(DocumentParser):
         tables: list[pd.DataFrame] = []
         if path.suffix.lower() == ".docx":
             try:
-                document = DocxDocument(path)
+                document = DocxDocument(str(path))
             except Exception as exc:
                 raise ParserError(f"Could not read DOCX: {exc}") from exc
             text = "\n".join(paragraph.text for paragraph in document.paragraphs)

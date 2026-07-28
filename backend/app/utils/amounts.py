@@ -33,18 +33,3 @@ def parse_amount(value: Any) -> Decimal:
         amount = -abs(amount)
     return amount.quantize(Decimal("0.01"))
 
-
-def indian_currency(value: Decimal | float | int) -> str:
-    amount = Decimal(str(value)).quantize(Decimal("0.01"))
-    sign = "-" if amount < 0 else ""
-    amount = abs(amount)
-    whole, fraction = f"{amount:.2f}".split(".")
-    if len(whole) > 3:
-        last = whole[-3:]
-        rest = whole[:-3]
-        groups: list[str] = []
-        while rest:
-            groups.append(rest[-2:])
-            rest = rest[:-2]
-        whole = ",".join(reversed(groups)) + "," + last
-    return f"{sign}₹{whole}.{fraction}"

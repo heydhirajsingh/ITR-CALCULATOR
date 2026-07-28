@@ -48,9 +48,9 @@ def rows_to_dataframe(rows: list[list[Any]]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     header_idx = 0
-    for idx, row in enumerate(rows[:10]):
-        non_empty = [str(cell).strip() for cell in row if str(cell or "").strip()]
-        if len(non_empty) >= 2:
+    for idx, row in enumerate(rows[:15]):
+        text = " ".join(str(c).lower() for c in row if c).strip()
+        if "date" in text or "particulars" in text or "description" in text or "narration" in text:
             header_idx = idx
             break
     header = [str(cell).strip() for cell in rows[header_idx]]
@@ -86,6 +86,7 @@ def dataframe_to_transactions(
         return []
 
     results: list[ParsedTransaction] = []
+    previous_balance: Decimal | None = None
     for row_number, (_, row) in enumerate(frame.iterrows(), start=2):
         transaction_date = parse_date(row.get(date_col))
         if transaction_date is None:
@@ -104,6 +105,8 @@ def dataframe_to_transactions(
                 credit = max(amount, Decimal("0"))
                 debit = abs(min(amount, Decimal("0")))
 
+        balance = parse_amount(row.get(balance_col)) if balance_col else None
+
         # Disambiguate rows where both debit and credit are positive due to column misalignment
         if debit > 0 and credit > 0:
             marker = " ".join(str(value) for value in row.tolist()).lower()
@@ -111,11 +114,38 @@ def dataframe_to_transactions(
                 debit = Decimal("0")
             elif any(token in marker for token in (" dr", "debit", "withdrawal", "to ")):
                 credit = Decimal("0")
+            elif balance is not None and previous_balance is not None:
+                if balance > previous_balance:
+                    debit = Decimal("0")
+                elif balance < previous_balance:
+                    credit = Decimal("0")
+                elif credit > debit:
+                    debit = Decimal("0")
+                else:
+                    credit = Decimal("0")
             elif credit > debit:
                 debit = Decimal("0")
             else:
                 credit = Decimal("0")
 
+        # Universal Mathematical Verification
+        if balance is not None and previous_balance is not None:
+            diff = balance - previous_balance
+            if diff > Decimal("0.01"):
+                amount = debit if debit > 0 else credit
+                if amount == 0:
+                    amount = diff
+                credit = amount
+                debit = Decimal("0")
+            elif diff < Decimal("-0.01"):
+                amount = credit if credit > 0 else debit
+                if amount == 0:
+                    amount = abs(diff)
+                debit = amount
+                credit = Decimal("0")
+
+        if balance is not None and (debit > 0 or credit > 0):
+            previous_balance = balance            
         if debit == 0 and credit == 0:
             continue
 

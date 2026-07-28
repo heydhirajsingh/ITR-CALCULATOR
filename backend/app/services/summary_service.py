@@ -1,15 +1,13 @@
 """High-performance dashboard, transaction and tax summary queries."""
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Integer, and_, case, cast, func, or_, select
+from sqlalchemy import Integer, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.models.entities import (
-    CapitalGain,
     Deduction,
     Document,
     TaxYear,

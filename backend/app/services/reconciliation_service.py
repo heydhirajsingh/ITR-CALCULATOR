@@ -1,7 +1,7 @@
 """AIS and Form 26AS reconciliation summaries based on linked and duplicate transactions."""
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.models.entities import Document, TaxYear, Transaction

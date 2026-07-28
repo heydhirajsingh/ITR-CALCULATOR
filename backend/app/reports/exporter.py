@@ -11,7 +11,7 @@ import fitz
 import pandas as pd
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case, or_
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import get_settings
@@ -19,12 +19,10 @@ from backend.app.models.entities import (
     CapitalGain,
     Deduction,
     Dividend,
-    Document,
     Expense,
     Interest,
     TaxYear,
     Transaction,
-    TransactionDirection,
 )
 from backend.app.services.reconciliation_service import reconciliation_service
 from backend.app.services.summary_service import summary_service
@@ -408,6 +406,12 @@ class ReportExporter:
                 select(
                     Transaction.bank_name,
                     func.sum(Transaction.credit),
+                    func.sum(case((or_(
+                        Transaction.ignored.is_(True),
+                        Transaction.is_duplicate.is_(True),
+                        Transaction.is_self_transfer.is_(True),
+                        Transaction.review_status == "pending"
+                    ), Transaction.credit), else_=0)),
                     func.sum(Transaction.debit),
                     func.count(Transaction.id),
                 )
@@ -415,21 +419,28 @@ class ReportExporter:
                 .group_by(Transaction.bank_name)
             ).all()
             return [
-                {"bank": bank or "Unknown", "credits": float(credits or 0), "debits": float(debits or 0), "transactions": count}
-                for bank, credits, debits, count in data
+                {
+                    "bank": bank or "Unknown", 
+                    "total_credits": float(credits or 0), 
+                    "excluded_credits": float(excluded or 0),
+                    "net_credits": float((credits or 0) - (excluded or 0)),
+                    "debits": float(debits or 0), 
+                    "transactions": count
+                }
+                for bank, credits, excluded, debits, count in data
             ], "Bank-wise Summary"
         if kind == "interest_summary":
-            items = db.scalars(select(Interest).where(Interest.tax_year_id == tax_year.id)).all()
+            interest_items = db.scalars(select(Interest).where(Interest.tax_year_id == tax_year.id)).all()
             return [
-                {"type": item.interest_type, "payer": item.payer, "amount": float(item.amount), "tds": float(item.tds)} for item in items
+                {"type": item.interest_type, "payer": item.payer, "amount": float(item.amount), "tds": float(item.tds)} for item in interest_items
             ], "Interest Summary"
         if kind == "dividend_summary":
-            items = db.scalars(select(Dividend).where(Dividend.tax_year_id == tax_year.id)).all()
+            dividend_items = db.scalars(select(Dividend).where(Dividend.tax_year_id == tax_year.id)).all()
             return [
-                {"company_or_fund": item.company_or_fund, "amount": float(item.amount), "tds": float(item.tds)} for item in items
+                {"company_or_fund": item.company_or_fund, "amount": float(item.amount), "tds": float(item.tds)} for item in dividend_items
             ], "Dividend Summary"
         if kind == "capital_gain_report":
-            items = db.scalars(select(CapitalGain).where(CapitalGain.tax_year_id == tax_year.id)).all()
+            gain_items = db.scalars(select(CapitalGain).where(CapitalGain.tax_year_id == tax_year.id)).all()
             return [
                 {
                     "asset_type": item.asset_type,
@@ -442,10 +453,10 @@ class ReportExporter:
                     "gain_type": item.gain_type,
                     "gain_amount": float(item.gain_amount),
                 }
-                for item in items
+                for item in gain_items
             ], "Capital Gain Report"
         if kind == "deduction_report":
-            items = db.scalars(select(Deduction).where(Deduction.tax_year_id == tax_year.id)).all()
+            deduction_items = db.scalars(select(Deduction).where(Deduction.tax_year_id == tax_year.id)).all()
             return [
                 {
                     "section": item.section,
@@ -455,7 +466,7 @@ class ReportExporter:
                     "suggested": item.suggested,
                     "accepted": item.accepted,
                 }
-                for item in items
+                for item in deduction_items
             ], "Deduction Report"
         if kind in {"ais_reconciliation", "26as_reconciliation"}:
             source = "AIS" if kind.startswith("ais") else "Form 26AS"
@@ -469,7 +480,7 @@ class ReportExporter:
                     Transaction.review_status == "pending",
                 )
             ).all()
-            return self._transaction_rows(txs), "Review Items"
+            return self._transaction_rows(list(txs)), "Review Items"
         income_type_map = {
             "salary_report": "Salary Income",
             "rental_report": "Rental Income",
@@ -482,9 +493,9 @@ class ReportExporter:
                     Transaction.income_type == income_type_map[kind],
                 )
             ).all()
-            return self._transaction_rows(txs), kind.replace("_", " ").title()
+            return self._transaction_rows(list(txs)), kind.replace("_", " ").title()
         if kind == "expense_report":
-            items = db.scalars(select(Expense).where(Expense.tax_year_id == tax_year.id)).all()
+            expense_items = db.scalars(select(Expense).where(Expense.tax_year_id == tax_year.id)).all()
             return [
                 {
                     "transaction_id": item.transaction_id,
@@ -493,10 +504,10 @@ class ReportExporter:
                     "business_use_percent": float(item.business_use_percent),
                     "deductible": item.deductible,
                 }
-                for item in items
+                for item in expense_items
             ], "Expense Report"
         txs = db.scalars(select(Transaction).where(Transaction.tax_year_id == tax_year.id)).all()
-        return self._transaction_rows(txs), "Transactions"
+        return self._transaction_rows(list(txs)), "Transactions"
 
     @staticmethod
     def _transaction_rows(items: list[Transaction]) -> list[dict[str, Any]]:
